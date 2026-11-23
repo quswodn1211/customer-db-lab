@@ -1,0 +1,5 @@
+﻿{"customer_ref":"REF-0001","full_name":"Customer 1","email":"customer1@example.test","tier":"premium"}
+{"customer_ref":"REF-0002","full_name":"Customer 2","email":"customer2@example.test","tier":"standard"}
+{"customer_ref":"REF-0003","full_name":"Customer 3","email":"customer3@example.test","tier":"premium"}
+{"customer_ref":"REF-0004","full_name":"Customer 4","email":"customer4@example.test","tier":"standard"}
+{"customer_ref":"REF-1005","full_name":"Customer 5","email":"customer5@example.test","tier":"premium"}
