@@ -24,13 +24,14 @@ try {
     $env:PGPASSWORD=$admin
     Sql lab_admin postgres "CREATE ROLE business_reader LOGIN PASSWORD '$reader'"
     }
-    $rng=New-Object System.Random($Seed)
-    $positions=1..100
-    for ($i=99;$i -gt 0;$i--) {
-        $j=$rng.Next($i+1)
-        $positions[$i],$positions[$j]=$positions[$j],$positions[$i]
-    }
     foreach ($percent in 1,5,10) {
+        $scenarioSeed=[int]((([long]$Seed + $percent) % 2147483647 + 2147483647) % 2147483647)
+        $rng=New-Object System.Random($scenarioSeed)
+        $positions=1..100
+        for ($i=99;$i -gt 0;$i--) {
+            $j=$rng.Next($i+1)
+            $positions[$i],$positions[$j]=$positions[$j],$positions[$i]
+        }
         $env:PGPASSWORD=$admin
         $db="customers_$percent"
         $dir=New-Item -ItemType Directory (Join-Path $run "$percent-percent")
@@ -60,7 +61,7 @@ try {
             Add-Content "$dir/received.jsonl" $json -Encoding utf8
             $count++
             $hit=$tokens -contains ($json | ConvertFrom-Json).customer_ref
-            [pscustomobject]@{utc=[datetime]::UtcNow.ToString('o');seed=$Seed;percent=$percent;received=$count;customer_ref=$row.customer_ref;detected=$hit} | Export-Csv "$run/events.csv" -Append -NoTypeInformation
+            [pscustomobject]@{utc=[datetime]::UtcNow.ToString('o');seed=$scenarioSeed;percent=$percent;received=$count;customer_ref=$row.customer_ref;detected=$hit} | Export-Csv "$run/events.csv" -Append -NoTypeInformation
             if ($hit) {break}
         }
         if (!$hit -or @(Get-Content "$dir/received.jsonl").Count -ne $count) {throw 'Receipt verification failed'}
@@ -72,4 +73,5 @@ try {
     if (Test-Path $pw) { Remove-Item $pw }
     $env:PGPASSWORD=$old
 }
+
 

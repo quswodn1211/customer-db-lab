@@ -14,4 +14,4 @@ DB 없이 수신 및 탐지 로직만 시험하려면 -Offline을 추가합니�
 
 runs 아래 실행별 폴더의 1-percent, 5-percent, 10-percent에는 원본 customers.csv, 토큰 목록 tokens.txt, 수신 결과 received.jsonl이 있습니다. 공통 events.csv에서 detected=True인 행의 received는 미끼 포함 누적 수신량이고, 이 값에서 1을 빼면 탐지 전 일반 고객 수입니다.
 
-example-results는 시드 42로 실행한 오프라인 결과입니다. 같은 순열에서 미끼를 추가하는 방식이라 세 조건 모두 다섯 번째 행에서 최초 탐지됐습니다. 한 번의 결과로 비율별 평균을 추정할 수 없습니다.
+example-results는 기본 시드 42에 비율 값(1, 5, 10)을 더한 시드 43, 47, 52로 각각 실행한 오프라인 결과입니다. 각 조건은 별도로 섞으며 events.csv의 seed가 해당 조건의 실제 시드입니다.
