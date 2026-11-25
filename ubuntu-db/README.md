@@ -2,6 +2,35 @@
 
 전체 고객을 읽을 수 있는 계정으로 조회했을 때 **조회 결과에 미끼 고객이 몇 개 포함됐고 어느 PC가 조회했는지** 확인합니다. DB의 PostgreSQL 로그가 원본 기록입니다. DB의 별도 프로세스가 미끼 경보를 골라 curl로 게이트웨이에 POST합니다. 게이트웨이가 꺼져 있어도 조회와 DB 기록은 계속됩니다.
 
+## 기준 고객 100명으로 HoneyGen 실행하기
+
+아래 VM 설치·네트워크 절차를 따르고, DB VM의 ubuntu-db/.env에 다음 줄을 추가합니다. 2~100 사이 정수이며 5는 기준 고객 100명에 미끼 5명을 추가한다는 뜻입니다.
+
+```dotenv
+HONEY_PERCENT=5
+```
+
+기존 서버가 실행 중이면 아래 7절의 pg_ctl 명령으로 정상 종료한 뒤 DB VM에서 실행합니다.
+
+```bash
+cd /opt/customer-db-lab/ubuntu-db
+sudo -u postgres python3.5 server.py
+```
+
+서버는 선택한 비율의 DB를 최초 한 번 생성합니다. 재시작하면 기존 결과를 재사용합니다. 비율을 12로 바꾸고 재시작하면 접속 대상은 honeygen_12입니다. 두 Windows IP에는 현재 선택한 HoneyGen 시나리오의 접속을 허용합니다. 이전 customers_2·5·10 시나리오는 아래 기존 실습 설명대로 사용할 수 있습니다.
+
+```powershell
+& 'C:\Program Files\PostgreSQL\19\bin\psql.exe' -h 192.168.100.30 -p 5433 -U business_reader -d honeygen_5 -W
+```
+
+```sql
+SELECT count(*) FROM read_customers();
+SELECT * FROM read_customers('email', false, 1, 0);
+SELECT * FROM read_customers('full_name', true, 1, 0);
+```
+
+5%에서 첫 쿼리는 105행을 집계하고 미끼 5건의 조회 경보를 남깁니다. 두 번째와 세 번째 쿼리는 각각 ASN 및 YSU 접두사의 서로 다른 미끼 1행을 반환합니다. 경보 전송·게이트웨이 확인은 3절과 6절을 따릅니다. 기본 고객은 Windows와 동일하며, 두 언어의 난수 생성기 차이로 미끼의 구체적인 값은 달라질 수 있습니다.
+
 ## 1. 네트워크와 파일 배치
 
 | 장비 | 예시 내부 IPv4 (/24) | 실행할 파일 | 연결 방향 |

@@ -1,2 +1,4 @@
 runs/
 ubuntu-db/.env
+
+__pycache__/

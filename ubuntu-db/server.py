@@ -6,6 +6,8 @@ from pathlib import Path
 import pwd
 import subprocess
 import sys
+import tempfile
+from honeygen import write_seed
 
 HERE = Path(__file__).resolve().parent
 ROOT = Path('/var/lib/postgresql/customer-honey-v2')
@@ -35,6 +37,10 @@ def main():
     if pwd.getpwuid(os.getuid()).pw_name != 'postgres':
         sys.exit('Run as the postgres OS user.')
     env = settings()
+    percent = int(env.get('HONEY_PERCENT', '5'))
+    if not 2 <= percent <= 100:
+        sys.exit('HONEY_PERCENT must be an integer from 2 to 100.')
+    scenario = 'honeygen_{}'.format(percent)
     port = env['DB_PORT']
     os.umask(0o077)
     version = (DATA / 'PG_VERSION').read_text().strip() if (DATA / 'PG_VERSION').exists() else '9.5'
@@ -48,7 +54,7 @@ def main():
     if not (DATA / 'PG_VERSION').exists():
         subprocess.check_call([str(binary / 'initdb'), '-D', str(DATA), '-E', 'UTF8',
                                '--no-locale', '--auth-local=peer', '--auth-host=reject'])
-    if not (ROOT / 'seeded').exists():
+    if not (ROOT / (scenario + '.ready')).exists():
         ctl = [str(binary / 'pg_ctl'), '-D', str(DATA), '-w']
         subprocess.check_call(ctl + ['-l', str(ROOT / 'setup.log'), '-o',
                               "-c listen_addresses='' -k {} -p {}".format(SOCKET, port), 'start'])
@@ -61,20 +67,30 @@ def main():
         try:
             if not exists('postgres', "SELECT 1 FROM pg_roles WHERE rolname='business_reader'"):
                 subprocess.check_call(client + ['-d', 'postgres', '-c', 'CREATE ROLE business_reader LOGIN'])
-            subprocess.check_call(client + ['-d', 'postgres', '-c', r'\password business_reader'])
+            if not (ROOT / 'seeded').exists():
+                subprocess.check_call(client + ['-d', 'postgres', '-c', r'\password business_reader'])
             for ratio in (2, 5, 10):
                 db = 'customers_{}'.format(ratio)
                 if not exists('postgres', "SELECT 1 FROM pg_database WHERE datname='{}'".format(db)):
                     subprocess.check_call(client + ['-d', 'postgres', '-c', 'CREATE DATABASE ' + db])
                 if not exists(db, "SELECT 1 WHERE to_regclass('honey.tokens') IS NOT NULL"):
                     subprocess.check_call(client + ['-d', db, '-v', 'ratio=' + str(ratio),
-                                          '-v', 'seed=' + str(42 + ratio), '-f', str(HERE / 'schema.sql')])
+                                          '-v', 'seed=' + str(42 + ratio), '-v', 'seed_file=' + str(HERE / 'legacy-seed.sql'), '-f', str(HERE / 'schema.sql')])
             (ROOT / 'seeded').touch()
+            if not exists('postgres', "SELECT 1 FROM pg_database WHERE datname='{}'".format(scenario)):
+                subprocess.check_call(client + ['-d', 'postgres', '-c', 'CREATE DATABASE ' + scenario])
+            if not exists(scenario, "SELECT 1 WHERE to_regclass('honey.tokens') IS NOT NULL"):
+                with tempfile.NamedTemporaryFile(mode='w', dir=str(ROOT)) as seed:
+                    write_seed(seed, percent)
+                    seed.flush()
+                    subprocess.check_call(client + ['-d', scenario, '-v', 'seed_file=' + seed.name,
+                                                   '-f', str(HERE / 'schema.sql')])
+            (ROOT / (scenario + '.ready')).touch()
         finally:
             subprocess.check_call(ctl + ['-m', 'fast', 'stop'])
     rules = ['local all postgres peer']
     for key in ('CLIENT_1_IP', 'CLIENT_2_IP'):
-        rules.append('host customers_2,customers_5,customers_10 business_reader {}/32 md5'.format(env[key]))
+        rules.append('host customers_2,customers_5,customers_10,{} business_reader {}/32 md5'.format(scenario, env[key]))
     hba = ROOT / 'lab_hba.conf'
     hba.write_text('\n'.join(rules) + '\n')
     args = [str(binary / 'postgres'), '-D', str(DATA), '-k', str(SOCKET), '-p', port,

@@ -8,18 +8,10 @@ CREATE TABLE public.customers (
 );
 CREATE TABLE honey.tokens (cno varchar(10) PRIMARY KEY REFERENCES public.customers);
 CREATE SEQUENCE honey.event_seq;
-INSERT INTO public.customers
-SELECT CASE n WHEN 0 THEN 'AAA-000' WHEN 99 THEN 'ZZZ-999' ELSE 'CUS-' || lpad(n::text,3,'0') END,
-       CASE n WHEN 0 THEN 'aa000' WHEN 99 THEN 'zz999' ELSE 'lab' || lpad(n::text,3,'0') END || '@gmail.com',
-       CASE n WHEN 0 THEN 'Ahn Ara' WHEN 99 THEN 'Zun Yuri' ELSE 'Kim ' || lpad(n::text,3,'0') END
-FROM generate_series(0,99) AS g(n);
-INSERT INTO honey.tokens VALUES ('AAA-000'), ('ZZZ-999');
-INSERT INTO honey.tokens
-SELECT cno FROM public.customers WHERE cno LIKE 'CUS-%'
-ORDER BY md5(:'seed' || cno), cno LIMIT (:ratio - 2);
+\i :seed_file
 
 CREATE FUNCTION public.read_customers(sort_by text DEFAULT 'cno', descending boolean DEFAULT false,
-                                      page_size integer DEFAULT 100, skip_rows integer DEFAULT 0)
+                                      page_size integer DEFAULT 200, skip_rows integer DEFAULT 0)
 RETURNS SETOF public.customers
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -27,7 +19,7 @@ DECLARE
     result public.customers;
 BEGIN
     IF sort_by IS NULL OR lower(sort_by) NOT IN ('cno','email','full_name') OR descending IS NULL
-       OR page_size IS NULL OR page_size NOT BETWEEN 0 AND 100 OR skip_rows IS NULL OR skip_rows < 0 THEN
+       OR page_size IS NULL OR page_size NOT BETWEEN 0 AND 200 OR skip_rows IS NULL OR skip_rows < 0 THEN
         RAISE EXCEPTION 'Invalid sort field, direction, page size or offset';
     END IF;
     FOR r IN EXECUTE format(
