@@ -1,48 +1,207 @@
-# Ubuntu DB 서버 실습
+# Ubuntu DB 서버와 Windows 클라이언트 실습
 
-DB VM의 VMware 어댑터와 두 클라이언트의 어댑터를 같은 labnet-in에 연결합니다. DB VM에 192.168.100.30/24, PC 1에 .20/24, PC 2에 .21/24를 설정한 예시입니다. 주소가 다르면 아래 .env에서 바꿉니다. .env는 PostgreSQL 수신 주소와 접속 허용 목록을 지정합니다. VM 운영체제의 IP는 별도로 설정합니다.
+전체 고객을 읽을 수 있는 계정으로 조회했을 때 **조회 결과에 미끼 고객이 몇 개 포함됐고 어느 PC가 조회했는지** 확인합니다. DB의 PostgreSQL 로그가 원본 기록입니다. DB의 별도 프로세스가 미끼 경보를 골라 curl로 게이트웨이에 POST합니다. 게이트웨이가 꺼져 있어도 조회와 DB 기록은 계속됩니다.
 
-## DB VM에서 실행
+## 1. 네트워크와 파일 배치
 
-저장소 전체를 postgres 사용자가 읽을 수 있는 위치에 놓습니다(예: /opt/customer-db-lab). ubuntu-db 폴더만 복사하면 상위 example-results 데이터가 빠집니다. 격리망으로 전환하기 전에 PostgreSQL 서버와 Python 3 패키지를 준비합니다.
+| 장비 | 예시 내부 IPv4 (/24) | 실행할 파일 | 연결 방향 |
+|---|---|---|---|
+| Ubuntu 16.04 DB | 192.168.100.30 | server.py, forward.py | 두 PC의 TCP 5433 접속 수신, 게이트웨이 TCP 8080으로 송신 |
+| Ubuntu 게이트웨이 | 192.168.100.53 | gateway.py | 내부 인터페이스에서 DB의 POST 수신 |
+| Windows PC 1 | 192.168.100.20 | psql.exe | DB TCP 5433으로 접속 |
+| Windows PC 2 | 192.168.100.21 | psql.exe | DB TCP 5433으로 접속 |
+
+네 장비의 내부 어댑터를 같은 VMware 내부 네트워크에 연결합니다. 게이트웨이는 내부 NIC의 주소를 사용합니다. OS 주소는 Ubuntu에서 `ip -4 addr`, Windows에서 `ipconfig`로 확인합니다. 예를 들어 DB가 실제로 192.168.70.130이고 PC들이 .133과 .134라면 세 값을 바꾸고, 게이트웨이의 실제 192.168.70.x 주소도 확인합니다.
+
+Windows의 기존 사본 경로는 다음과 같습니다.
+
+```powershell
+cd C:\src\network_security_project\customer-db-lab\ubuntu-db
+Get-ChildItem -Force
+```
+
+수정된 `ubuntu-db` 폴더 전체를 두 Ubuntu VM의 `/opt/customer-db-lab/ubuntu-db`에 복사합니다. 프로젝트의 `example-results` 폴더는 필요 없습니다. DB 파일은 최초 실행 때 생성합니다.
+
+배포 ZIP을 VM의 홈 폴더에 옮긴 경우 아래처럼 필요한 폴더만 풉니다. 기존 .env는 ZIP에 포함되어 있지 않습니다. 수정해 둔 소스가 있으면 먼저 별도 위치에 보관하세요.
 
 ```bash
-# Ubuntu 16.04 LTS (amd64) 실습 VM
-sudo apt-get update
-apt-cache madison postgresql-9.5 postgresql-client-9.5 python3.5
-sudo apt-get install postgresql-9.5=9.5.25-0ubuntu0.16.04.1 postgresql-client-9.5=9.5.25-0ubuntu0.16.04.1 python3.5=3.5.2-2ubuntu0~16.04.13
-dpkg-query -W postgresql-9.5 postgresql-client-9.5 python3.5
+sudo mkdir -p /opt/customer-db-lab
+sudo unzip -o ~/customer-db-lab-ubuntu.zip 'ubuntu-db/*' -d /opt/customer-db-lab
+```
+
+두 Ubuntu VM에서 다음을 실행합니다. 기존 .env가 있으면 누락된 키를 .env.example에서 추가합니다.
+
+```bash
 cd /opt/customer-db-lab/ubuntu-db
-cp .env.example .env
+cp -n .env.example .env
 nano .env
 ip -4 addr
+```
+
+```dotenv
+DB_SERVER_IP=192.168.100.30
+CLIENT_1_IP=192.168.100.20
+CLIENT_2_IP=192.168.100.21
+DB_PORT=5433
+GATEWAY_IP=192.168.100.53
+GATEWAY_PORT=8080
+ALERT_PATH=/alerts
+```
+
+두 VM에 동일한 값을 저장합니다. nano는 Ctrl+O, Enter로 저장하고 Ctrl+X로 종료합니다. .env는 프로그램의 바인딩과 접속 허용값을 지정하므로 실제 NIC 주소는 먼저 OS에서 설정해야 합니다. HTTP 수신기는 DB의 출발지 IP를 확인합니다. 예시의 평문 HTTP와 IP 허용은 격리 실습망을 전제로 합니다.
+
+## 2. Ubuntu 패키지 설치
+
+격리하기 전 Ubuntu 16.04 amd64에서 설치합니다. 아래는 실습용 버전 핀입니다. `apt-cache madison`으로 설정된 저장소에서 제공하는 버전을 확인하세요. 이전 버전이 없는 저장소에서는 사용 가능한 Xenial 패키지의 전체 버전으로 핀을 바꿉니다. 더 최신 보안 패치가 이미 설치되어 있다면 그대로 사용합니다.
+
+**DB VM**
+
+```bash
+sudo apt-get update
+apt-cache madison postgresql-9.5 postgresql-client-9.5 python3.5 curl
+sudo apt-get install postgresql-9.5=9.5.25-0ubuntu0.16.04.1 postgresql-client-9.5=9.5.25-0ubuntu0.16.04.1 python3.5=3.5.2-2ubuntu0~16.04.13 curl=7.47.0-1ubuntu2.19
+dpkg-query -W postgresql-9.5 postgresql-client-9.5 python3.5 curl
+id postgres
+```
+
+**게이트웨이 VM**에는 Python 표준 라이브러리를 사용하는 수신기만 실행합니다.
+
+```bash
+python3.5 --version
+# Python 3.5가 없을 때
+sudo apt-get update
+sudo apt-get install python3.5=3.5.2-2ubuntu0~16.04.13
+```
+
+## 3. 게이트웨이, DB, 전달기 시작
+
+세 터미널을 각각 열어 둡니다. 실행 계정이 소스 폴더에 접근하고 .env를 읽을 수 있어야 합니다.
+
+**게이트웨이 터미널**
+
+```bash
+cd /opt/customer-db-lab/ubuntu-db
+python3.5 gateway.py
+```
+
+수신기는 성공 시 HTTP 204를 반환하고 실행한 사용자의 `~/honey-alerts.sqlite`에 저장합니다. 실습 방화벽이 켜져 있으면 내부 NIC에서 DB IP가 보내는 TCP 8080을 허용합니다.
+
+**DB 터미널 1**
+
+```bash
+cd /opt/customer-db-lab/ubuntu-db
 sudo -u postgres python3.5 server.py
 ```
 
-최초 실행 때 business_reader 비밀번호를 두 번 입력합니다. 전용 클러스터와 데이터는 /var/lib/postgresql/customer-honey-lab에 보관합니다. 기본 포트 5433으로 터미널에서 서버를 계속 실행합니다. Ctrl+C로 종료한 뒤 같은 명령으로 재시작하면 기존 DB를 사용합니다. 두 PC의 IP 변경도 .env를 수정하고 재시작하면 적용됩니다. 호스트 방화벽이 활성 상태라면 지정한 두 IP에서 DB 포트로 들어오는 TCP를 허용합니다.
+처음에는 business_reader의 비밀번호를 두 번 입력합니다. 기존 프로젝트와 별개인 `/var/lib/postgresql/customer-honey-v2`에 클러스터를 만듭니다. 예전 서버가 같은 내부 IP의 5433을 사용 중이면 그 서버를 먼저 정상 종료하거나 새 .env의 DB_PORT와 클라이언트 포트를 함께 변경합니다. DB 측 방화벽에서는 두 Windows IP에서 오는 TCP 5433을 허용합니다.
 
-공식 패키지 목록에서 확인한 실습 재현용 버전입니다. 설치 전에 위 madison 출력에 세 버전이 모두 표시되는지 확인합니다. 목록에 빠진 버전은 현재 VM의 APT 저장소에서 설치할 수 없습니다. [PostgreSQL 패키지](https://security.ubuntu.com/ubuntu/pool/main/p/postgresql-9.5/) · [Python 패키지](https://security.ubuntu.com/ubuntu/pool/main/p/python3.5/)
-
-## 두 PC에서 확인
-
-Ubuntu 16.04 클라이언트 PC에서는 아래 명령으로 psql을 설치합니다.
+**DB 터미널 2**
 
 ```bash
-sudo apt-get update
-sudo apt-get install postgresql-client-9.5=9.5.25-0ubuntu0.16.04.1
+cd /opt/customer-db-lab/ubuntu-db
+sudo -u postgres python3.5 forward.py
 ```
 
-각 PC에 PostgreSQL 클라이언트를 설치하고 터미널에서 아래 명령을 실행합니다. .env를 변경했다면 주소와 포트를 맞춥니다.
+전달기는 DB의 audit.csv에서 SQLSTATE HNY01인 LOG를 읽어 설정한 URL로 전송합니다. HTTP 2xx를 받은 뒤 파일 위치를 저장합니다. 전송 실패 시 3초 뒤 재시도하고, 재시작하면 저장된 위치에서 계속합니다. 응답 손실로 중복 전송되면 게이트웨이가 event_id로 한 번만 저장합니다. 실습 중에는 audit.csv를 교체하거나 비우지 마세요. 자동 순환을 끈 파일이므로 실습 종료 후 디스크 사용량을 확인하세요.
+
+## 4. Windows 두 대에 PostgreSQL 클라이언트 설치
+
+두 PC 각각에서 [PostgreSQL Windows 다운로드](https://www.postgresql.org/download/windows/)의 64비트 설치 프로그램을 실행합니다. 이 안내의 예시 버전은 PostgreSQL 19.0입니다. 구성 요소에서 **Command Line Tools**를 선택하면 psql.exe를 사용할 수 있습니다. 서버는 Ubuntu에서 실행하므로 PC에 별도 DB를 만들 필요가 없습니다. 이미 설치했다면 바로 PowerShell에서 확인합니다.
+
+```powershell
+$psql = 'C:\Program Files\PostgreSQL\19\bin\psql.exe'
+& $psql --version
+$db = '192.168.100.30'
+$port = 5433
+Test-NetConnection $db -Port $port
+& $psql -X -h $db -p $port -U business_reader -d customers_5 -W
+```
+
+다른 버전이나 사용자 지정 경로라면 $psql을 수정합니다. TcpTestSucceeded가 True이면 암호를 입력합니다. 아래 SQL은 PowerShell이 아닌 customers_5 프롬프트에서 실행합니다.
+
+```sql
+SELECT current_database(), session_user, inet_client_addr();
+SELECT * FROM public.read_customers('cno', false, 1, 1);
+SELECT * FROM public.read_customers('email', false, 1, 0);
+SELECT * FROM public.read_customers('full_name', true, 1, 0);
+```
+
+첫 줄의 IP가 각 PC의 주소와 일치하는지 확인합니다. 함수 인수는 **정렬 열, 내림차순 여부, 최대 행 수, 건너뛸 행 수** 순서입니다. 두 번째 줄은 중간 일반행 또는 추가 미끼를 읽습니다. 세 번째 줄은 AAA-000, 네 번째 줄은 ZZZ-999를 반환하며 각 1건의 경보가 발생합니다. psql 종료는 `\q`입니다.
+
+## 5. 데이터와 권한
+
+| 고객 열 | 조건 | 데이터 생성 방식 |
+|---|---|---|
+| CNO | varchar(10), 기본키, 영문 대문자 3자 + 하이픈 + 숫자 3자 | AAA-000, CUS-001 ~ CUS-098, ZZZ-999 |
+| EMAIL | text, NOT NULL, 소문자·숫자 계정명과 @gmail.com | aa000, lab001 ~ lab098, zz999를 계정명으로 사용 |
+| FULL_NAME | varchar(20), NOT NULL | Ahn Ara, Kim 001 ~ Kim 098, Zun Yuri |
+
+세 열 모두 C 정렬 규칙을 사용합니다. 100행에서 세 열 중 어느 열로 정렬해도 오름차순 양 끝은 AAA-000과 ZZZ-999이고 내림차순이면 순서가 바뀝니다. Gmail 주소는 형식 실습용 문자열로 메일을 보내지 않습니다. 관리 전용 honey.tokens에 등록한 CNO가 판정 기준입니다. 고객 테이블에는 토큰 여부 열이 없습니다.
+
+| DB | 전체 | 고정 미끼 | 추가 미끼 | 추가 미끼 선택 시드 |
+|---|---:|---:|---:|---:|
+| customers_2 | 100 | 2 | 0 | 44 (추가 선택 없음) |
+| customers_5 | 100 | 2 | 3 | 47 |
+| customers_10 | 100 | 2 | 8 | 52 |
+
+schema.sql은 나머지 98개 CNO를 시드와 함께 해시해 정렬한 후 필요한 개수만 등록합니다. business_reader는 세 DB의 100행 모두를 함수로 읽을 수 있습니다. 원본 테이블과 토큰 목록에 대한 직접 조회 권한은 없습니다. PostgreSQL의 일반 SELECT에는 행 트리거가 없으므로 결과 범위 결정, 미끼 판정, 로그 기록을 함수 안에서 처리합니다. DB 관리자 postgres의 직접 테이블 조회는 별도 경로입니다.
+
+## 6. 경보 검증
+
+관측하기 쉬운 customers_2로 Windows에서 접속합니다. 아래 각 SQL을 한 번씩 실행하고 DB와 게이트웨이 로그를 확인합니다.
+
+```sql
+SELECT * FROM read_customers('cno', false, 1, 1);
+SELECT * FROM read_customers('cno', false, 1, 0);
+SELECT * FROM read_customers('cno', true, 1, 0);
+SELECT count(*) FROM read_customers();
+```
+
+순서대로 **경보 0건, 1건(AAA-000), 1건(ZZZ-999), 2건**이 추가됩니다. 마지막 쿼리의 결과값은 100입니다. 함수 밖에 LIMIT이나 WHERE를 붙이면 함수가 먼저 더 많은 행을 처리할 수 있으므로 측정할 범위는 함수 인수로 지정하세요. 경보 시점은 DB 함수가 미끼행을 결과에 넣는 시점입니다. DB 로그만으로 클라이언트 수신 완료, 외부 반출량 또는 사용자의 신원을 확정할 수 없습니다. 정상적인 전체 조회도 경보를 발생시킵니다.
+
+**DB 로그 관찰** (별도 Ubuntu 터미널)
 
 ```bash
-psql -h 192.168.100.30 -p 5433 -U business_reader -d customers_5 -W
+sudo -u postgres tail -F /var/lib/postgresql/customer-honey-v2/audit.csv | grep --line-buffered HNY01
+```
+
+**게이트웨이 수신 확인** (수신기를 시작한 OS 사용자로 실행)
+
+```bash
+python3.5 -c "import sqlite3,os; db=sqlite3.connect(os.path.expanduser('~/honey-alerts.sqlite')); print('\n'.join(r[0] for r in db.execute('select payload from alerts order by rowid desc limit 10')))"
+```
+
+같은 event_id, cno, db, login, client_ip, time이 양쪽에 있는지 확인합니다. client_ip는 조회한 Windows PC이고, HTTP 연결의 발신지는 DB 서버입니다. 이 구성은 경보 수집까지 수행합니다. 자동 차단 정책은 포함하지 않습니다.
+
+**Ubuntu에서 관리자 SQL 실행**
+
+```bash
+sudo -u postgres /usr/lib/postgresql/9.5/bin/psql -h /var/lib/postgresql/customer-honey-v2/socket -p 5433 -d customers_5
 ```
 
 ```sql
-SELECT current_database(), current_user, inet_client_addr();
-SELECT count(*) FROM customers;
-SELECT customer_ref, full_name, email, tier FROM customers LIMIT 5;
+\d public.customers
+SELECT count(*) FROM public.customers;
+SELECT cno FROM honey.tokens ORDER BY cno;
+\q
 ```
 
-두 PC에서 inet_client_addr()가 각각 자신의 내부망 IP이고 count가 100이면 정상입니다. customers_1, customers_5, customers_10은 각각 100행 중 1, 5, 10개가 미끼인 독립 시나리오입니다. 두 PC는 같은 전체 조회 계정을 사용합니다. 서버는 DB 조회를 제공하며 이전 PowerShell의 로컬 수신 로그 집계와 게이트웨이의 탐지·차단은 별도 단계입니다.
+## 7. 문제 해결 및 종료
 
+| 증상 | 확인할 내용 |
+|---|---|
+| sudo: unknown user: postgres | DB VM에서 postgresql-9.5 서버 패키지 설치 결과와 id postgres 확인 |
+| Cannot assign requested address | 오류에 나온 IP와 해당 VM의 ip -4 addr 대조. DB는 DB_SERVER_IP, 게이트웨이는 GATEWAY_IP를 실제 내부 NIC에 맞춤 |
+| Address already in use | ss -ltn으로 5433 또는 8080 점유 확인. 기존 실습 프로세스를 정상 종료하거나 포트 설정을 양쪽에서 변경 |
+| Windows TCP 연결 실패 | VMware 내부망 이름, OS 주소·서브넷, DB 기동 상태, 방화벽 확인 |
+| no pg_hba.conf entry / password authentication failed | CLIENT_1_IP·CLIENT_2_IP와 Windows ipconfig, DB 이름, business_reader 암호 확인. .env 변경 후 관련 프로세스 재시작 |
+| permission denied for table customers | Windows에서 public.read_customers(...)로 접속 경로 확인 |
+| DB 경보만 있고 게이트웨이에 없음 | 전달기 터미널 재시도 메시지, 두 .env의 내부 주소·경로, 게이트웨이 수신기와 방화벽 확인. 수신기의 403은 DB 출발지 IP 불일치 |
+
+종료는 DB에서 먼저 아래 명령으로 조회 서버를 정상 종료하고 전송이 끝난 뒤 전달기와 게이트웨이 터미널에서 각각 Ctrl+C를 누릅니다. 다음 실행에서도 같은 클러스터, 전송 위치, 수신 DB를 사용합니다.
+
+```bash
+sudo -u postgres /usr/lib/postgresql/9.5/bin/pg_ctl -D /var/lib/postgresql/customer-honey-v2/data -m fast -w stop
+```
+
+참고 문서: [PostgreSQL 9.5 CSV 서버 로그](https://www.postgresql.org/docs/9.5/runtime-config-logging.html), [Ubuntu Xenial curl 패키지](https://lists.ubuntu.com/archives/xenial-changes/2021-March/029879.html).

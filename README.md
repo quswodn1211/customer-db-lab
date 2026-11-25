@@ -1,19 +1,17 @@
-# 고객 DB 허니토큰 탐지 실험
+# 고객 DB 허니토큰 실습
 
-각 조건은 고객 100행 전체를 읽을 수 있는 업무 계정을 가정합니다. 네 열은 고객 참조번호, 이름, 이메일, 등급입니다. 100행 중 각각 1·5·10행을 미끼로 배치합니다. 조건별 DB는 독립된 실험 복제본입니다. 각 복제본 안에 일반 행과 미끼 행이 함께 있습니다.
+Windows PC 두 대에서 Ubuntu PostgreSQL 서버에 접속해 고객 데이터를 조회합니다. DB가 결과에 포함된 미끼의 고유번호를 감지하고 게이트웨이 내부 IP로 HTTP 경보를 보냅니다. 설치, Windows용 PostgreSQL 클라이언트, SQL 예제 및 경보 확인 절차는 [Ubuntu 서버와 Windows 클라이언트 실습 안내](ubuntu-db/README.md)에 있습니다.
 
-Windows PowerShell에서 PostgreSQL 서버와 명령줄 도구가 설치된 경우 다음을 실행합니다.
+| 실습 | 실행 위치 | 데이터와 관측 지점 |
+|---|---|---|
+| 현재 VM 실습 | Ubuntu DB, Ubuntu 게이트웨이, Windows 클라이언트 | 고객 100행, 3열, 미끼 2·5·10개. DB 조회 함수가 경보 기록 |
+| 이전 단독 실험 | Windows PowerShell | 고객 100행, 4열, 미끼 1·5·10개. 모의 수신 프로그램이 첫 토큰을 확인 |
+
+이전 결과를 재현하려면 Windows에서 저장소 루트로 이동합니다. PostgreSQL을 설치한 경우 아래 첫 명령을 사용하고, CSV만 사용할 때는 두 번째 명령을 사용합니다.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\customer-lab.ps1
+powershell -ExecutionPolicy Bypass -File .\customer-lab.ps1 -Offline
 ```
 
-DB 없이 수신 및 탐지 로직만 시험하려면 -Offline을 추가합니다. -Seed 123으로 미끼 배치를 변경할 수 있습니다. 기본 포트는 55432입니다.
-
-스크립트는 고정 순서로 한 행씩 로컬 수신 파일에 기록하고 참조번호를 토큰 목록과 대조합니다. 첫 일치 직후 다음 조회를 중단합니다. 이 차단은 실험 프로그램에만 적용됩니다. 실제 네트워크 반출이나 방화벽 차단은 측정하지 않습니다.
-
-runs 아래 실행별 폴더의 1-percent, 5-percent, 10-percent에는 원본 customers.csv, 토큰 목록 tokens.txt, 수신 결과 received.jsonl이 있습니다. 공통 events.csv에서 detected=True인 행의 received는 미끼 포함 누적 수신량이고, 이 값에서 1을 빼면 탐지 전 일반 고객 수입니다.
-
-example-results는 기본 시드 42에 비율 값(1, 5, 10)을 더한 시드 43, 47, 52로 각각 실행한 오프라인 결과입니다. 각 조건은 별도로 섞으며 events.csv의 seed가 해당 조건의 실제 시드입니다.
-
-Ubuntu VM에서 두 PC의 접속을 허용하는 방법은 [Ubuntu DB 서버 실습](ubuntu-db/README.md)을 참고하세요.
+이 실험의 결과는 실행별 `runs` 폴더에, 기존 예시 결과는 `example-results`에 있습니다. VM 실습은 자체 SQL로 데이터를 생성합니다.
