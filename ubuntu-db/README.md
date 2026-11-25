@@ -69,6 +69,8 @@ GATEWAY_PORT=8080
 ALERT_PATH=/alerts
 ```
 
+<img src="gateway-ip.png" alt="게이트웨이 내부 IP를 확인하세요" width="366">
+
 192.168.100.53은 예시입니다. 게이트웨이 VM에서 `ip -4 addr`로 내부망 NIC의 실제 IPv4 주소를 확인하고 두 VM의 GATEWAY_IP에 같은 주소를 입력합니다. Ctrl+O, Enter로 저장하고 Ctrl+X로 종료한 뒤 2절의 패키지 확인과 3절의 실행 절차로 이동합니다.
 
 ### 폴더 복사 또는 ZIP으로 설치
