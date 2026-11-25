@@ -20,6 +20,30 @@ cd C:\src\network_security_project\customer-db-lab\ubuntu-db
 Get-ChildItem -Force
 ```
 
+### 기존 Git 클론 업데이트
+
+DB VM과 게이트웨이 VM에서 각각 `/opt/customer-db-lab`을 Git으로 클론했다면, GitHub의 main 브랜치에 변경 사항이 올라간 뒤 다음 명령을 실행합니다.
+
+```bash
+cd /opt/customer-db-lab
+git pull --ff-only origin main
+cd ubuntu-db
+cp -n .env.example .env
+nano .env
+```
+
+`cp -n`은 .env가 없을 때만 예시 파일을 복사합니다. 기존 .env를 사용 중이면 아래 세 항목 중 빠진 줄을 추가합니다. 이미 있는 키는 해당 줄에서 값을 수정합니다.
+
+```dotenv
+GATEWAY_IP=192.168.100.53
+GATEWAY_PORT=8080
+ALERT_PATH=/alerts
+```
+
+192.168.100.53은 예시입니다. 게이트웨이 VM에서 `ip -4 addr`로 내부망 NIC의 실제 IPv4 주소를 확인하고 두 VM의 GATEWAY_IP에 같은 주소를 입력합니다. Ctrl+O, Enter로 저장하고 Ctrl+X로 종료한 뒤 2절의 패키지 확인과 3절의 실행 절차로 이동합니다.
+
+### 폴더 복사 또는 ZIP으로 설치
+
 수정된 `ubuntu-db` 폴더 전체를 두 Ubuntu VM의 `/opt/customer-db-lab/ubuntu-db`에 복사합니다. 프로젝트의 `example-results` 폴더는 필요 없습니다. DB 파일은 최초 실행 때 생성합니다.
 
 배포 ZIP을 VM의 홈 폴더에 옮긴 경우 아래처럼 필요한 폴더만 풉니다. 기존 .env는 ZIP에 포함되어 있지 않습니다. 수정해 둔 소스가 있으면 먼저 별도 위치에 보관하세요.
