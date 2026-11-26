@@ -26,15 +26,18 @@ def provision():
     statements = ["BEGIN;", "SELECT pg_advisory_xact_lock(4825309);",
                   "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='honey_api') "
                   "THEN CREATE ROLE honey_api LOGIN; END IF; END $$;",
-                  (HERE / 'api.sql').read_text()]
+                  (HERE / 'api.sql').read_text(), (HERE / 'read-customers.sql').read_text()]
     for cno in ids:
         if not re.fullmatch(r'[A-Z]{3}-[0-9]{3}', cno):
             raise ValueError('Invalid CNO')
         key = base64.urlsafe_b64encode(os.urandom(32)).decode('ascii').rstrip('=')
         digest = hashlib.sha256(key.encode('ascii')).hexdigest()
-        statements.append("INSERT INTO honey.api_keys VALUES ('{}','{}','{}') "
-                          "ON CONFLICT (cno) DO NOTHING;".format(cno, key, digest))
-    query('postgres', '\n'.join(statements + ['COMMIT;']))
+        statements.append("WITH issued AS (UPDATE public.customers SET api_key='{}' "
+                          "WHERE cno='{}' AND api_key IS NULL RETURNING cno) "
+                          "INSERT INTO honey.api_keys(cno,key_hash) SELECT cno,'{}' FROM issued;"
+                          .format(key, cno, digest))
+    statements.extend(["ALTER TABLE public.customers ALTER COLUMN api_key SET NOT NULL;", "COMMIT;"])
+    query('postgres', '\n'.join(statements))
     print('Provisioned keys for {} customers'.format(len(ids)))
 
 class Handler(BaseHTTPRequestHandler):
@@ -52,8 +55,8 @@ class Handler(BaseHTTPRequestHandler):
         digest = hashlib.sha256(auth.group(1).encode('ascii')).hexdigest()
         try:
             peer = ipaddress.IPv4Address(self.client_address[0])
-            rows = query('honey_api', "SELECT row_to_json(c) FROM "
-                         "public.api_customer('{}','{}'::inet) c;".format(digest, peer))
+            rows = query('honey_api', "SELECT row_to_json(c) FROM (SELECT cno,email,full_name FROM "
+                         "public.api_customer('{}','{}'::inet)) c;".format(digest, peer))
         except (OSError, subprocess.CalledProcessError):
             self.send_error(503)
             return

@@ -1,8 +1,20 @@
 CREATE TABLE IF NOT EXISTS honey.api_keys (
     cno varchar(10) PRIMARY KEY REFERENCES public.customers,
-    api_key text NOT NULL UNIQUE,
     key_hash text NOT NULL UNIQUE
 );
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_attribute WHERE attrelid='public.customers'::regclass
+                   AND attname='api_key' AND NOT attisdropped) THEN
+        ALTER TABLE public.customers ADD COLUMN api_key text UNIQUE;
+    END IF;
+    IF EXISTS (SELECT FROM pg_attribute WHERE attrelid='honey.api_keys'::regclass
+               AND attname='api_key' AND NOT attisdropped) THEN
+        UPDATE public.customers c SET api_key=k.api_key FROM honey.api_keys k WHERE c.cno=k.cno;
+        ALTER TABLE honey.api_keys DROP COLUMN api_key;
+    END IF;
+END;
+$$;
 CREATE OR REPLACE FUNCTION public.api_customer(digest text, peer inet)
 RETURNS SETOF public.customers LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp AS $$

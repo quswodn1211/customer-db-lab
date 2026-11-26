@@ -30,12 +30,12 @@ sudo -u postgres python3.5 forward.py
 
 honey_api 사용자가 소스 폴더와 .env를 읽을 수 있어야 합니다. API는 해당 계정으로 로컬 소켓에 접속하며, 운영 테이블을 직접 읽는 권한 없이 API 조회 함수만 실행합니다. 시나리오 비율을 바꾼 경우 새 DB에서 --provision을 실행하고 API를 재시작하세요. 실습 PC에서 DB VM의 TCP 8090으로 접속을 허용해야 합니다.
 
-**키 배정 확인**은 DB VM의 관리자 psql에서 합니다. 선택한 시나리오(예: honeygen_5)에 접속하여 아래 쿼리를 실행합니다. 실제 배정 시에는 해당 고객의 키만 전달합니다. 키는 실습용 관리자 테이블에 보관되며 게이트웨이 이벤트에는 CNO와 이벤트 ID만으로 고객을 연결할 수 있습니다.
+**키 배정 확인**은 DB VM의 관리자 psql에서 합니다. 선택한 시나리오(예: honeygen_5)에 접속하여 아래 쿼리를 실행합니다. 실제 배정 시에는 해당 고객의 키만 전달합니다. 발급한 키 원문은 고객 행의 public.customers.api_key에 저장됩니다. business_reader도 read_customers()로 고객 정보와 키를 함께 볼 수 있습니다. 기존 설치에서 --provision을 실행하면 원래 키가 그대로 이전됩니다. 게이트웨이 이벤트에는 CNO와 이벤트 ID만으로 고객을 연결할 수 있습니다.
 
 ```sql
-SELECT k.cno, k.api_key, (t.cno IS NOT NULL) AS is_honey
-FROM honey.api_keys k LEFT JOIN honey.tokens t USING (cno)
-ORDER BY is_honey DESC, k.cno;
+SELECT c.cno, c.email, c.full_name, c.api_key, (t.cno IS NOT NULL) AS is_honey
+FROM public.customers c LEFT JOIN honey.tokens t USING (cno)
+ORDER BY is_honey DESC, c.cno;
 ```
 
 **Windows 클라이언트**에서 정상 키와 미끼 키를 각각 한 번 입력합니다. 잘못된 키는 HTTP 401입니다.
