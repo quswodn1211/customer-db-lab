@@ -21,6 +21,8 @@ def lines(stream):
 def forward():
     config = settings()
     url = 'http://{}:{}{}'.format(config['GATEWAY_IP'], config['GATEWAY_PORT'], config['ALERT_PATH'])
+    key = config.get('HT_SHARED_KEY', '')
+    headers = ['-H', 'X-Honeytoken-Key: ' + key] if key else []
     log = ROOT / 'audit.csv'
     checkpoint = ROOT / 'alert.offset'
     pending = ROOT / 'alert.offset.tmp'
@@ -47,7 +49,7 @@ def forward():
                     reply = subprocess.run(['curl', '--silent', '--show-error', '--noproxy', '*',
                                             '--max-time', '4', '--output', os.devnull, '--write-out',
                                             '%{http_code}', '-H', 'Content-Type: application/json',
-                                            '--data-binary', '@-', url], input=payload.encode('utf-8'),
+                                            '--data-binary', '@-'] + headers + [url], input=payload.encode('utf-8'),
                                            stdout=subprocess.PIPE)
                     if reply.returncode == 0 and reply.stdout.startswith(b'2'):
                         print('Delivered ' + event['event_id'], flush=True)

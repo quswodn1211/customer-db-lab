@@ -25,7 +25,7 @@ def main():
                     raise ValueError()
                 body = self.rfile.read(size).decode('utf-8')
                 event = json.loads(body)
-                if event['event'] != 'HONEYTOKEN_READ' or not isinstance(event['event_id'], str):
+                if event['event'] not in ('HONEYTOKEN_READ', 'HONEYTOKEN_API_USED') or not isinstance(event['event_id'], str):
                     raise ValueError()
                 with store:
                     store.execute('INSERT OR IGNORE INTO alerts VALUES (?,?)', (event['event_id'], body))

@@ -4,6 +4,49 @@
 
 전체 고객을 읽을 수 있는 계정으로 조회했을 때 **조회 결과에 미끼 고객이 몇 개 포함됐고 어느 PC가 조회했는지** 확인합니다. DB의 PostgreSQL 로그가 원본 기록입니다. DB의 별도 프로세스가 미끼 경보를 골라 curl로 게이트웨이에 POST합니다. 게이트웨이가 꺼져 있어도 조회와 DB 기록은 계속됩니다.
 
+## 고객별 API 키 사용 경보
+
+HoneyGen 고객 1명(CNO)당 키 하나를 발급합니다. 고객은 같은 GET /v1/me 경로에 자신의 키를 제시합니다. 일반 키는 해당 고객 정보만 반환하고, 미끼 키는 같은 형태로 응답하면서 DB에 HONEYTOKEN_API_USED 경보를 남깁니다. 접속 IP는 TCP 연결의 출발지에서 가져옵니다. 이 HTTP 구성은 격리된 내부 실습망에서 사용합니다.
+
+**팀 게이트웨이**에서는 [팀 저장소의 block_server.py](https://github.com/jihuns22/network_TermProject/tree/main/defense/gateway/block)를 실행합니다. 같은 포트의 예전 gateway.py 대신 이 수신기를 사용하세요. 처음에는 아래처럼 방화벽 변경 없이 검증할 수 있습니다. HT_ALLOWED_SENDERS는 실제 DB의 내부 IP로 바꿉니다.
+
+```bash
+cd network_TermProject/defense/gateway/block
+HT_ALLOWED_SENDERS=192.168.100.30 python3 block_server.py --dry-run --log "$HOME/honey-alerts.jsonl"
+```
+
+**DB VM**에서 업데이트한 server.py로 DB를 재시작합니다. .env에서 API_PORT=8090, GATEWAY_PORT=8080, ALERT_PATH=/alerts를 확인합니다. 팀 게이트웨이에 HT_SHARED_KEY가 설정돼 있으면 DB .env에도 같은 값을 추가하고 forward.py를 재시작합니다. 공유 키를 비워 두면 게이트웨이의 출발지 IP 허용 목록을 사용합니다.
+
+```bash
+cd /opt/customer-db-lab/ubuntu-db
+# API 전용 OS 계정은 최초 한 번 생성
+id honey_api || sudo adduser --system --group --no-create-home honey_api
+# DB 기동 후 실행. 다시 실행해도 기존 API 키는 유지됩니다.
+sudo -u postgres python3.5 customer_api.py --provision
+# 별도 터미널에서 각각 실행
+sudo -u honey_api python3.5 customer_api.py
+sudo -u postgres python3.5 forward.py
+```
+
+honey_api 사용자가 소스 폴더와 .env를 읽을 수 있어야 합니다. API는 해당 계정으로 로컬 소켓에 접속하며, 운영 테이블을 직접 읽는 권한 없이 API 조회 함수만 실행합니다. 시나리오 비율을 바꾼 경우 새 DB에서 --provision을 실행하고 API를 재시작하세요. 실습 PC에서 DB VM의 TCP 8090으로 접속을 허용해야 합니다.
+
+**키 배정 확인**은 DB VM의 관리자 psql에서 합니다. 선택한 시나리오(예: honeygen_5)에 접속하여 아래 쿼리를 실행합니다. 실제 배정 시에는 해당 고객의 키만 전달합니다. 키는 실습용 관리자 테이블에 보관되며 게이트웨이 이벤트에는 CNO와 이벤트 ID만으로 고객을 연결할 수 있습니다.
+
+```sql
+SELECT k.cno, k.api_key, (t.cno IS NOT NULL) AS is_honey
+FROM honey.api_keys k LEFT JOIN honey.tokens t USING (cno)
+ORDER BY is_honey DESC, k.cno;
+```
+
+**Windows 클라이언트**에서 정상 키와 미끼 키를 각각 한 번 입력합니다. 잘못된 키는 HTTP 401입니다.
+
+```powershell
+$key = Read-Host '테스트할 고객의 API 키'
+curl.exe --noproxy "*" -i -H "Authorization: Bearer $key" http://192.168.100.30:8090/v1/me
+```
+
+**게이트웨이 확인**은 DB VM에서 먼저 curl --noproxy '*' http://192.168.100.53:8080/health 로 하고, 수신기 터미널 또는 로그에서 db_event가 HONEYTOKEN_API_USED이고 attacker_ip가 Windows PC 내부 IP인 alert를 확인합니다. 정상 키 사용은 이 경보를 만들지 않습니다. 실제 차단 모드에서는 팀 게이트웨이의 기존 IP 차단 정책도 함께 실행됩니다.
+
 ## 기준 고객 100명으로 HoneyGen 실행하기
 # <3번>
 아래 VM 설치·네트워크 절차를 따르고, DB VM의 ubuntu-db/.env에 다음 줄을 추가합니다. 2~100 사이 정수이며 5는 기준 고객 100명에 미끼 5명을 추가한다는 뜻입니다.

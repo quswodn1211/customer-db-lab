@@ -49,6 +49,8 @@ def main():
     lock = (ROOT / 'bootstrap.lock').open('a')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     SOCKET.mkdir(exist_ok=True)
+    os.chmod(str(ROOT), 0o711)
+    os.chmod(str(SOCKET), 0o711)
     if (DATA / 'postmaster.pid').exists():
         sys.exit('Check the existing lab server before starting another instance.')
     if not (DATA / 'PG_VERSION').exists():
@@ -88,7 +90,7 @@ def main():
             (ROOT / (scenario + '.ready')).touch()
         finally:
             subprocess.check_call(ctl + ['-m', 'fast', 'stop'])
-    rules = ['local all postgres peer']
+    rules = ['local all postgres peer', 'local {} honey_api peer'.format(scenario)]
     for key in ('CLIENT_1_IP', 'CLIENT_2_IP'):
         rules.append('host customers_2,customers_5,customers_10,{} business_reader {}/32 md5'.format(scenario, env[key]))
     hba = ROOT / 'lab_hba.conf'
